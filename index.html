@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Привычки</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #111111);
+    --hint: var(--tg-theme-hint-color, #8a8a8e);
+    --btn: var(--tg-theme-button-color, #2481cc);
+    --btn-text: var(--tg-theme-button-text-color, #ffffff);
+    --card: var(--tg-theme-secondary-bg-color, #f2f2f7);
+    --cell: rgba(128, 128, 128, .20);
+    --off: rgba(128, 128, 128, .08);
+    --ok: #34c759;
+    --danger: #ff3b30;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 4px 0 14px; }
+  .card { background: var(--card); border-radius: 16px; padding: 14px; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .grow { flex: 1; min-width: 0; }
+  .name { font-weight: 600; font-size: 17px; overflow-wrap: anywhere; }
+  .edit { background: none; border: 0; color: var(--hint); font-size: 15px; padding: 2px 6px; cursor: pointer; }
+  .streak { color: var(--hint); font-size: 14px; margin-top: 2px; }
+  .check { width: 34px; height: 34px; border-radius: 10px; border: 2px solid var(--hint);
+    background: transparent; color: #fff; font-size: 20px; line-height: 1; cursor: pointer; flex: none; padding: 0; }
+  .check.on { background: var(--ok); border-color: var(--ok); }
+  .rest { color: var(--hint); font-size: 12px; text-align: right; max-width: 70px; line-height: 1.2; }
+
+  .heat { margin-top: 12px; display: grid; grid-template-columns: 22px 1fr; gap: 4px; }
+  .months { grid-column: 2; display: grid; grid-template-columns: repeat(var(--weeks), 1fr); font-size: 10px; color: var(--hint); height: 12px; }
+  .months span { white-space: nowrap; overflow: visible; }
+  .dows { display: grid; grid-template-rows: repeat(7, 1fr); font-size: 9px; color: var(--hint); gap: 3px; }
+  .dows span { display: flex; align-items: center; }
+  .grid { display: grid; grid-template-rows: repeat(7, 1fr); grid-auto-flow: column;
+    grid-template-columns: repeat(var(--weeks), 1fr); gap: 3px; }
+  .cell { aspect-ratio: 1; border-radius: 3px; background: var(--cell); }
+  .cell.off { background: var(--off); }
+  .cell.future { background: transparent; }
+  .cell.done { background: var(--ok); }
+  .cell.today { outline: 2px solid var(--btn); outline-offset: 1px; }
+
+  .empty { text-align: center; color: var(--hint); padding: 30px 10px; }
+  button.primary { width: 100%; padding: 13px; border: 0; border-radius: 12px; background: var(--btn);
+    color: var(--btn-text); font-size: 16px; font-weight: 600; cursor: pointer; }
+  button.secondary { width: 100%; padding: 12px; border: 1px solid var(--hint); border-radius: 12px;
+    background: transparent; color: var(--btn); font-size: 16px; cursor: pointer; margin-top: 8px; }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  label { font-size: 13px; color: var(--hint); display: block; margin: 0 0 6px; }
+  input[type=text] { width: 100%; padding: 12px; font-size: 16px; border-radius: 12px; color: var(--text);
+    border: 1px solid var(--hint); background: var(--bg); margin-bottom: 14px; }
+  .chips { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-bottom: 14px; }
+  .chip { padding: 10px 0; border-radius: 10px; border: 1px solid var(--hint); background: transparent;
+    color: var(--text); font-size: 14px; cursor: pointer; }
+  .chip.on { background: var(--btn); border-color: var(--btn); color: var(--btn-text); }
+  .hidden { display: none; }
+  .note { color: var(--hint); font-size: 12px; text-align: center; margin-top: 10px; }
+</style>
+</head>
+<body>
+  <h1>Привычки</h1>
+  <div id="list"></div>
+
+  <div id="form" class="card hidden">
+    <label for="fname">Привычка</label>
+    <input id="fname" type="text" maxlength="60" placeholder="Например, бегать по утрам" autocomplete="off">
+    <label>Я планирую</label>
+    <div class="chips" id="chips"></div>
+    <button class="primary" id="save">Добавить</button>
+    <button class="secondary" id="cancel">Отменить</button>
+    <button class="secondary danger hidden" id="remove">Удалить привычку</button>
+  </div>
+
+  <button class="primary" id="add">＋ Новая привычка</button>
+  <div class="note">Нажмите на клеточку в календаре, чтобы отметить или снять день.</div>
+
+<script>
+(function () {
+  var tg = window.Telegram && window.Telegram.WebApp;
+  var cloud = !!(tg && tg.initData && tg.CloudStorage);
+  if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
+
+  var WEEKS = 18;
+  var DOW = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  var MONTHS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+
+  /* ---------- хранилище ---------- */
+  var LS = 'habits_v1_';
+  function lsGet() {
+    var out = {};
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k.indexOf(LS) === 0) out[k.slice(LS.length)] = localStorage.getItem(k);
+      }
+    } catch (e) {}
+    return out;
+  }
+  function kvLoad(cb) {
+    if (!cloud) return cb(lsGet());
+    tg.CloudStorage.getKeys(function (err, keys) {
+      keys = (!err && keys) ? keys.filter(function (k) { return k.indexOf('h_') === 0; }) : [];
+      if (!keys.length) return cb({});
+      tg.CloudStorage.getItems(keys, function (e2, vals) { cb(e2 ? {} : vals); });
+    });
+  }
+  function kvSet(k, v) {
+    if (cloud) tg.CloudStorage.setItem(k, v);
+    else try { localStorage.setItem(LS + k, v); } catch (e) {}
+  }
+  function kvDel(k) {
+    if (cloud) tg.CloudStorage.removeItem(k);
+    else try { localStorage.removeItem(LS + k); } catch (e) {}
+  }
+
+  /* ---------- даты ---------- */
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function mk(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1); }
+  function dayStart(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+  function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+  function dow(d) { return (d.getDay() + 6) % 7; }   // 0 = понедельник
+  var TODAY = dayStart(new Date());
+
+  /* ---------- данные ---------- */
+  var habits = [];
+  var editing = null;      // id редактируемой привычки или null
+  var picked = [0, 1, 2, 3, 4, 5, 6];
+
+  function save(h) { kvSet('h_' + h.id, JSON.stringify({ n: h.name, d: h.days, x: h.done })); }
+  function parse(map) {
+    var list = [];
+    Object.keys(map).forEach(function (k) {
+      if (k.indexOf('h_') !== 0) return;
+      try {
+        var o = JSON.parse(map[k]);
+        list.push({ id: k.slice(2), name: o.n, days: o.d || [0,1,2,3,4,5,6], done: o.x || {} });
+      } catch (e) {}
+    });
+    list.sort(function (a, b) { return parseInt(a.id, 36) - parseInt(b.id, 36); });
+    return list;
+  }
+
+  function isDone(h, d) { var a = h.done[mk(d)]; return !!a && a.indexOf(d.getDate()) >= 0; }
+  function sched(h, d) { return h.days.indexOf(dow(d)) >= 0; }
+  function toggle(h, d) {
+    var key = mk(d), a = h.done[key] || [], i = a.indexOf(d.getDate());
+    if (i >= 0) a.splice(i, 1); else a.push(d.getDate());
+    if (a.length) h.done[key] = a; else delete h.done[key];
+    save(h);
+    if (tg && tg.HapticFeedback) try { tg.HapticFeedback.impactOccurred('light'); } catch (e) {}
+  }
+  function streak(h) {
+    var d = TODAY, n = 0, guard = 0;
+    if (sched(h, d) && !isDone(h, d)) d = addDays(d, -1);   // сегодня ещё можно успеть
+    while (guard++ < 800) {
+      if (sched(h, d)) { if (isDone(h, d)) n++; else break; }
+      d = addDays(d, -1);
+    }
+    return n;
+  }
+  function plural(n) {
+    var m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return 'день';
+    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return 'дня';
+    return 'дней';
+  }
+
+  /* ---------- отрисовка ---------- */
+  var $ = function (id) { return document.getElementById(id); };
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function render() {
+    var box = $('list');
+    box.innerHTML = '';
+    if (!habits.length) {
+      box.appendChild(el('div', 'empty', 'Пока пусто. Добавьте первую привычку ниже.'));
+      return;
+    }
+    habits.forEach(function (h) { box.appendChild(card(h)); });
+  }
+
+  function card(h) {
+    var c = el('div', 'card');
+    var top = el('div', 'row');
+    var mid = el('div', 'grow');
+    var nm = el('div', 'name', h.name);
+    var ed = el('button', 'edit', '✎');
+    ed.setAttribute('aria-label', 'Изменить');
+    ed.onclick = function () { openForm(h); };
+    nm.appendChild(ed);
+    var s = streak(h);
+    mid.appendChild(nm);
+    mid.appendChild(el('div', 'streak', s + ' ' + plural(s) + ' подряд' + (s >= 3 ? ' 🔥' : '')));
+    top.appendChild(mid);
+
+    if (sched(h, TODAY)) {
+      var ck = el('button', 'check' + (isDone(h, TODAY) ? ' on' : ''), isDone(h, TODAY) ? '✓' : '');
+      ck.setAttribute('aria-label', 'Отметить сегодня');
+      ck.onclick = function () { toggle(h, TODAY); render(); };
+      top.appendChild(ck);
+    } else {
+      top.appendChild(el('div', 'rest', 'сегодня выходной'));
+    }
+    c.appendChild(top);
+    c.appendChild(heat(h));
+    return c;
+  }
+
+  function heat(h) {
+    var wrap = el('div', 'heat');
+    wrap.style.setProperty('--weeks', WEEKS);
+
+    var start = addDays(TODAY, -dow(TODAY) - (WEEKS - 1) * 7);   // понедельник первой колонки
+
+    wrap.appendChild(el('div'));                                  // пустой угол
+    var months = el('div', 'months');
+    var prev = -1;
+    for (var w = 0; w < WEEKS; w++) {
+      var mon = addDays(start, w * 7);
+      var span = el('span', '', mon.getMonth() !== prev ? MONTHS[mon.getMonth()] : '');
+      prev = mon.getMonth();
+      months.appendChild(span);
+    }
+    wrap.appendChild(months);
+
+    var dows = el('div', 'dows');
+    DOW.forEach(function (n, i) { dows.appendChild(el('span', '', i % 2 === 0 ? n : '')); });
+    wrap.appendChild(dows);
+
+    var grid = el('div', 'grid');
+    for (var i = 0; i < WEEKS * 7; i++) {
+      (function (d) {
+        var cell = el('div', 'cell');
+        if (d > TODAY) cell.className += ' future';
+        else if (!sched(h, d)) cell.className += ' off';
+        else {
+          if (isDone(h, d)) cell.className += ' done';
+          cell.onclick = function () { toggle(h, d); render(); };
+        }
+        if (d.getTime() === TODAY.getTime()) cell.className += ' today';
+        cell.title = d.getDate() + ' ' + MONTHS[d.getMonth()];
+        grid.appendChild(cell);
+      })(addDays(start, i));
+    }
+    wrap.appendChild(grid);
+    return wrap;
+  }
+
+  /* ---------- форма ---------- */
+  function drawChips() {
+    var c = $('chips');
+    c.innerHTML = '';
+    DOW.forEach(function (n, i) {
+      var b = el('button', 'chip' + (picked.indexOf(i) >= 0 ? ' on' : ''), n.toLowerCase());
+      b.type = 'button';
+      b.onclick = function () {
+        var p = picked.indexOf(i);
+        if (p >= 0) picked.splice(p, 1); else picked.push(i);
+        drawChips();
+      };
+      c.appendChild(b);
+    });
+  }
+
+  function openForm(h) {
+    editing = h ? h.id : null;
+    $('fname').value = h ? h.name : '';
+    picked = h ? h.days.slice() : [0, 1, 2, 3, 4, 5, 6];
+    $('save').textContent = h ? 'Сохранить' : 'Добавить';
+    $('remove').className = 'secondary danger' + (h ? '' : ' hidden');
+    drawChips();
+    $('form').className = 'card';
+    $('add').className = 'primary hidden';
+    $('list').className = 'hidden';
+    $('fname').focus();
+  }
+  function closeForm() {
+    $('form').className = 'card hidden';
+    $('add').className = 'primary';
+    $('list').className = '';
+    editing = null;
+  }
+
+  $('add').onclick = function () { openForm(null); };
+  $('cancel').onclick = closeForm;
+  $('save').onclick = function () {
+    var name = $('fname').value.trim();
+    if (!name) { $('fname').focus(); return; }
+    if (!picked.length) { picked = [0, 1, 2, 3, 4, 5, 6]; }
+    picked.sort();
+    if (editing) {
+      var h = habits.filter(function (x) { return x.id === editing; })[0];
+      if (h) { h.name = name; h.days = picked.slice(); save(h); }
+    } else {
+      var n = { id: Date.now().toString(36), name: name, days: picked.slice(), done: {} };
+      habits.push(n); save(n);
+    }
+    closeForm(); render();
+  };
+  $('remove').onclick = function () {
+    var id = editing;
+    function doIt() {
+      habits = habits.filter(function (x) { return x.id !== id; });
+      kvDel('h_' + id);
+      closeForm(); render();
+    }
+    if (tg && tg.showConfirm) tg.showConfirm('Удалить привычку вместе с историей?', function (ok) { if (ok) doIt(); });
+    else if (window.confirm('Удалить привычку вместе с историей?')) doIt();
+  };
+
+  /* ---------- старт ---------- */
+  kvLoad(function (map) { habits = parse(map); render(); });
+})();
+</script>
+</body>
+</html>
