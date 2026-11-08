@@ -62,10 +62,23 @@
   .chip.on { background: var(--btn); border-color: var(--btn); color: var(--btn-text); }
   .hidden { display: none; }
   .note { color: var(--hint); font-size: 12px; text-align: center; margin-top: 10px; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 4px 0 14px; }
+  .top h1 { margin: 0; }
+  .plan { border: 0; border-radius: 12px; padding: 9px 12px; background: var(--card); color: var(--btn);
+    font-size: 15px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .link { background: none; border: 0; color: var(--hint); font-size: 12px; text-decoration: underline; cursor: pointer; padding: 4px; }
 </style>
 </head>
 <body>
-  <h1>Привычки</h1>
+  <div class="top"><h1>Привычки</h1><button class="plan" id="plan">🎯 План</button></div>
+
+  <div id="planForm" class="card hidden">
+    <label for="planUrl">Адрес плана развития (веб-приложение Apps Script)</label>
+    <input id="planUrl" type="text" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
+    <button class="primary" id="planSave">Сохранить и открыть</button>
+    <button class="secondary" id="planCancel">Отменить</button>
+  </div>
+
   <div id="list"></div>
 
   <div id="form" class="card hidden">
@@ -80,6 +93,7 @@
 
   <button class="primary" id="add">＋ Новая привычка</button>
   <div class="note">Нажмите на клеточку в календаре, чтобы отметить или снять день.</div>
+  <div class="note"><button class="link" id="planEdit">адрес плана развития</button></div>
 
 <script>
 (function () {
@@ -318,6 +332,43 @@
     }
     if (tg && tg.showConfirm) tg.showConfirm('Удалить привычку вместе с историей?', function (ok) { if (ok) doIt(); });
     else if (window.confirm('Удалить привычку вместе с историей?')) doIt();
+  };
+
+  /* ---------- план развития (отдельная страница в Google Apps Script) ---------- */
+  // Адрес хранится в том же CloudStorage, что и привычки (ключ не начинается с «h_», в список не попадает).
+  var PLAN_KEY = 'cfg_plan_url';
+  var PLAN_RE = /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/;
+  function getPlan(cb) {
+    if (cloud) { tg.CloudStorage.getItem(PLAN_KEY, function (e, v) { cb(!e && v ? v : ''); }); return; }
+    try { cb(localStorage.getItem(PLAN_KEY) || ''); } catch (e) { cb(''); }
+  }
+  function setPlan(v) {
+    if (cloud) tg.CloudStorage.setItem(PLAN_KEY, v);
+    try { localStorage.setItem(PLAN_KEY, v); } catch (e) {}
+  }
+  // Передаём странице плана подписанные данные запуска Telegram: по ним она проверяет, что это вы.
+  function openPlan(url) {
+    var p = function (k, v) { return k + '=' + encodeURIComponent(v || ''); };
+    location.href = url + '#' + [p('tgWebAppData', tg && tg.initData), p('tgWebAppVersion', tg && tg.version),
+      p('tgWebAppPlatform', tg && tg.platform), p('tgWebAppThemeParams', JSON.stringify(tg && tg.themeParams || {}))].join('&');
+  }
+  function showPlanForm(value) {
+    $('planUrl').value = value || '';
+    $('planForm').classList.remove('hidden');
+    $('planUrl').focus();
+  }
+  $('plan').onclick = function () { getPlan(function (u) { if (u) openPlan(u); else showPlanForm(''); }); };
+  $('planEdit').onclick = function () { getPlan(showPlanForm); };
+  $('planCancel').onclick = function () { $('planForm').classList.add('hidden'); };
+  $('planSave').onclick = function () {
+    var v = $('planUrl').value.trim().split('#')[0].split('?')[0];
+    if (!PLAN_RE.test(v)) {
+      var msg = 'Нужен адрес веб-приложения: https://script.google.com/macros/s/…/exec';
+      if (tg && tg.showAlert) tg.showAlert(msg); else window.alert(msg);
+      return;
+    }
+    setPlan(v);
+    openPlan(v);
   };
 
   /* ---------- старт ---------- */
