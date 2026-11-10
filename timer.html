@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Таймер ведущего</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --fg: var(--tg-theme-text-color, #1d1d1f);
+    --muted: var(--tg-theme-hint-color, #8a8a8e);
+    --card: var(--tg-theme-secondary-bg-color, #f2f2f5);
+    --accent: var(--tg-theme-button-color, #2f7cf6);
+    --accent-fg: var(--tg-theme-button-text-color, #ffffff);
+    --warn: #e5484d;
+    --ok: #30a46c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-tg]) { --bg: #17181c; --fg: #f2f2f5; --card: #24262c; --muted: #9a9aa2; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.35 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; user-select: none; }
+  main { max-width: 460px; margin: 0 auto; padding: 16px 16px 28px; }
+  .dial { position: relative; width: min(78vw, 300px); aspect-ratio: 1; margin: 4px auto 14px; }
+  .dial svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .dial circle { fill: none; stroke-width: 10; }
+  .track { stroke: var(--card); }
+  .bar { stroke: var(--accent); stroke-linecap: round; transition: stroke .2s; }
+  .time { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .digits { font-size: clamp(56px, 19vw, 84px); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -1px; }
+  .label { color: var(--muted); font-size: 15px; min-height: 20px; text-align: center; padding: 0 24px; }
+  .low .bar { stroke: var(--warn); } .low .digits { color: var(--warn); }
+  .done .digits { color: var(--warn); animation: blink .6s steps(2) 6; }
+  @keyframes blink { 50% { opacity: .25; } }
+  .row { display: flex; gap: 10px; margin-bottom: 12px; }
+  button { font: inherit; border: 0; border-radius: 14px; padding: 14px 10px; background: var(--card); color: var(--fg); flex: 1; cursor: pointer; }
+  button:active { transform: scale(.97); }
+  .main-btn { background: var(--accent); color: var(--accent-fg); font-weight: 600; font-size: 18px; padding: 16px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 20px 4px 8px; font-weight: 600; }
+  .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .presets button { text-align: left; padding: 11px 12px; }
+  .presets b { display: block; font-size: 17px; }
+  .presets span { color: var(--muted); font-size: 13px; }
+  .presets button.on { outline: 2px solid var(--accent); }
+  .counter { display: flex; align-items: center; gap: 10px; background: var(--card); border-radius: 14px; padding: 8px; }
+  .counter button { background: var(--bg); flex: 0 0 56px; font-size: 22px; padding: 10px 0; }
+  .counter .n { flex: 1; text-align: center; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .counter .n small { font-size: 15px; color: var(--muted); font-weight: 500; }
+  .counter.win .n { color: var(--ok); }
+</style>
+</head>
+<body>
+<main>
+  <div class="dial" id="dial">
+    <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="54"/><circle class="bar" id="bar" cx="60" cy="60" r="54"/></svg>
+    <div class="time"><div class="digits" id="digits">0:20</div><div class="label" id="label">Обсуждение карты</div></div>
+  </div>
+
+  <div class="row"><button class="main-btn" id="start">▶ Старт</button></div>
+  <div class="row">
+    <button id="minus">−10 с</button><button id="reset">↺ Сброс</button><button id="plus">+10 с</button>
+  </div>
+
+  <h2>Сколько времени</h2>
+  <div class="presets" id="presets"></div>
+
+  <h2>Счёт верных ответов (Блиц)</h2>
+  <div class="counter" id="counter">
+    <button id="cminus">−</button><div class="n"><span id="count">0</span> <small>/ 10</small></div><button id="cplus">+</button>
+  </div>
+</main>
+<script>
+const tg = window.Telegram && Telegram.WebApp;
+if (tg && tg.initData !== undefined) { document.documentElement.dataset.tg = '1'; tg.ready(); tg.expand(); }
+
+const PRESETS = [
+  [20, 'Обсуждение карты'], [30, 'Карта: 30 с'],
+  [60, 'Супер-блиц'], [120, 'Блиц · конструктор · стикеры'],
+  [180, 'Табу'], [300, '5 минут']
+];
+const R = 54, LEN = 2 * Math.PI * R;
+const $ = id => document.getElementById(id);
+const bar = $('bar'); bar.style.strokeDasharray = LEN;
+
+let total = 20, left = 20, endAt = 0, timer = null, label = PRESETS[0][1], count = 0, audio = null, wake = null;
+
+const q = new URLSearchParams(location.search);
+if (+q.get('s') > 0) { total = left = Math.min(3600, +q.get('s')); label = q.get('t') || ''; }
+
+function fmt(s) { s = Math.max(0, Math.ceil(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+function draw() {
+  $('digits').textContent = fmt(left);
+  $('label').textContent = left <= 0 ? 'Время вышло!' : label;
+  bar.style.strokeDashoffset = LEN * (1 - Math.max(0, left) / (total || 1));
+  $('dial').classList.toggle('low', left > 0 && left <= 5 && !!timer);
+  $('start').textContent = timer ? '⏸ Пауза' : (left > 0 && left < total ? '▶ Продолжить' : '▶ Старт');
+  document.querySelectorAll('.presets button').forEach(b => b.classList.toggle('on', +b.dataset.s === total));
+}
+
+function beep(freq, ms, delay) {
+  if (!audio) return;
+  const o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime + (delay || 0);
+  o.frequency.value = freq; o.connect(g); g.connect(audio.destination);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.4, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + ms / 1000);
+  o.start(t); o.stop(t + ms / 1000 + 0.05);
+}
+function haptic(kind) { try { tg && tg.HapticFeedback && (kind === 'end' ? tg.HapticFeedback.notificationOccurred('warning') : tg.HapticFeedback.impactOccurred('light')); } catch (e) {} try { navigator.vibrate && navigator.vibrate(kind === 'end' ? [400, 150, 400, 150, 600] : 40); } catch (e) {} }
+
+let lastSec = null;
+function tick() {
+  left = (endAt - Date.now()) / 1000;
+  const sec = Math.ceil(left);
+  if (sec !== lastSec && sec <= 5 && sec > 0) { beep(880, 120); haptic('tick'); }
+  lastSec = sec;
+  if (left <= 0) { stop(); left = 0; finish(); }
+  draw();
+}
+function finish() {
+  $('dial').classList.remove('done'); void $('dial').offsetWidth; $('dial').classList.add('done');
+  [0, .35, .7].forEach(d => beep(660, 300, d)); beep(990, 700, 1.05);
+  haptic('end');
+}
+function start() {
+  if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (audio && audio.state === 'suspended') audio.resume();
+  if (left <= 0) left = total;
+  $('dial').classList.remove('done');
+  endAt = Date.now() + left * 1000; lastSec = null;
+  timer = setInterval(tick, 100);
+  try { navigator.wakeLock && navigator.wakeLock.request('screen').then(w => wake = w).catch(() => {}); } catch (e) {}
+  draw();
+}
+function stop() { clearInterval(timer); timer = null; try { wake && wake.release(); } catch (e) {} wake = null; }
+function setTime(s, l) { stop(); total = left = Math.max(5, Math.min(3600, s)); if (l !== undefined) label = l; $('dial').classList.remove('done'); draw(); }
+
+$('start').onclick = () => { timer ? (stop(), draw()) : start(); };
+$('reset').onclick = () => setTime(total);
+$('plus').onclick = () => { if (timer) { endAt += 10000; tick(); } else { total += 10; left = Math.min(total, left + 10); draw(); } };
+$('minus').onclick = () => { if (timer) { endAt -= 10000; tick(); } else { total = Math.max(5, total - 10); left = Math.min(left, total); draw(); } };
+
+const box = $('presets');
+PRESETS.forEach(([s, l]) => {
+  const b = document.createElement('button'); b.dataset.s = s;
+  b.innerHTML = '<b>' + fmt(s) + '</b><span>' + l + '</span>';
+  b.onclick = () => setTime(s, l);
+  box.appendChild(b);
+});
+
+function setCount(n) { count = Math.max(0, n); $('count').textContent = count; $('counter').classList.toggle('win', count >= 10); if (count === 10) { beep(1200, 250); haptic('end'); } }
+$('cplus').onclick = () => setCount(count + 1);
+$('cminus').onclick = () => setCount(count - 1);
+
+draw();
+</script>
+</body>
+</html>
